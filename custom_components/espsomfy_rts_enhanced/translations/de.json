@@ -1,0 +1,263 @@
+{
+  "config": {
+    "abort": {
+      "no_devices_found": "Keine Geräte im Netzwerk gefunden",
+      "single_instance_allowed": "Bereits konfiguriert. Es ist nur eine einzige Konfiguration möglich."
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "discovery_error": "Gerät nicht gefunden",
+      "invalid_host": "Ungültiger Hostname oder IP-Adresse",
+      "unknown": "Unerwarteter Fehler",
+      "invalid_password": "Ungültiger Benutzername oder Passwort",
+      "invalid_pin": "Ungültiger PIN-Code",
+      "login_error": "Ungültige Anmeldedaten"
+    },
+    "step": {
+      "confirm": {
+        "data": {
+          "host": "Host-Adresse für das ESPSomfy-RTS-Gerät",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "pin": "PIN-Code"
+        },
+        "title": "ESPSomfy-RTS konfigurieren",
+        "description": "Geben Sie die für Ihr Gerät konfigurierten Sicherheitsoptionen ein"
+      },
+      "user": {
+        "data": {
+          "host": "Host-Adresse für das ESPSomfy-RTS-Gerät",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "pin": "PIN-Code"
+        },
+        "description": "Geben Sie die für Ihr Gerät konfigurierten Sicherheitsoptionen ein",
+        "title": "ESPSomfy-RTS konfigurieren"
+      },
+      "zeroconf_confirm": {
+        "data": {
+          "host": "Host-Adresse für das ESPSomfy-RTS-Gerät",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "pin": "PIN-Code"
+        },
+        "description": "Möchten Sie {model} mit der Server-ID {server_id} zu Home Assistant hinzufügen?",
+        "title": "ESPSomfy-RTS entdeckt"
+      }
+    }
+  },
+  "options": {
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "discovery_error": "Gerät nicht gefunden",
+      "invalid_host": "Ungültiger Hostname oder IP-Adresse",
+      "unknown": "Unerwarteter Fehler",
+      "invalid_password": "Ungültiger Benutzername oder Passwort",
+      "invalid_pin": "Ungültiger PIN-Code",
+      "login_error": "Ungültige Anmeldedaten"
+    },
+    "step": {
+      "init": {
+        "data": {
+          "host": "Host-Adresse für das ESPSomfy-RTS-Gerät",
+          "username": "Benutzername",
+          "password": "Passwort",
+          "pin": "PIN-Code"
+        },
+        "title": "ESPSomfy-RTS konfigurieren",
+        "description": "Einrichtung der für Ihr Gerät konfigurierten Sicherheitsoptionen"
+      }
+    }
+  },
+  "entity": {
+    "button": {
+      "reboot": {
+        "name": "Neustarten"
+      },
+      "backup": {
+        "name": "Sicherung erstellen"
+      }
+    },
+    "update": {
+      "firmware": {
+        "name": "Firmware"
+      }
+    },
+    "binary_sensor": {
+      "sun_sensor": {
+        "name": "Sonnenschein"
+      },
+      "wind_sensor": {
+        "name": "Wind"
+      }
+    },
+    "sensor": {
+      "host_name": {
+        "name": "Hostname"
+      },
+      "chip_model": {
+        "name": "Chiptyp"
+      },
+      "conn_type": {
+        "name": "Verbindung"
+      },
+      "wifi_sensor": {
+        "name": "WLAN-Signalstärke"
+      },
+      "wifi_ssid": {
+        "name": "WLAN SSID"
+      },
+      "wifi_channel": {
+        "name": "WLAN-Kanal"
+      },
+      "eth_speed": {
+        "name": "Verbindungsgeschwindigkeit"
+      },
+      "eth_full_duplex": {
+        "name": "Full Duplex"
+      },
+      "free_memory": {
+        "name": "Freier Speicher"
+      },
+      "max_memory": {
+        "name": "Maximaler Speicher"
+      },
+      "min_memory": {
+        "name": "Minimaler Speicher"
+      },
+      "ip_addresss": {
+        "name": "IP-Adresse"
+      }
+    },
+    "switch": {
+      "sun_mode_switch": {
+        "name": "Sonnensensor"
+      },
+      "dry_contact_switch": {
+        "name": "Potenzialfreier Kontakt"
+      }
+    }
+  },
+  "services": {
+    "open_shade": {
+      "name": "Abdeckung öffnen",
+      "description": "Öffnet die Abdeckung vollständig"
+    },
+    "close_shade": {
+      "name": "Abdeckung schließen",
+      "description": "Schließt die Abdeckung vollständig"
+    },
+    "stop_shade": {
+      "name": "Abdeckung anhalten",
+      "description": "Stoppt die Abdeckung an der aktuellen Position"
+    },
+    "set_shade_position": {
+      "name": "Position festlegen",
+      "description": "Stellt die Öffnungsposition in Prozent ein",
+      "fields": {
+        "position": {
+          "name": "Position",
+          "description": "Die Zielposition der Abdeckung"
+        }
+      }
+    },
+    "tilt_open": {
+      "name": "Lamellen öffnen",
+      "description": "Neigt die Lamellen in die offene Position"
+    },
+    "tilt_close": {
+      "name": "Lamellen schließen",
+      "description": "Neigt die Lamellen in die geschlossene Position"
+    },
+    "set_tilt_position": {
+      "name": "Lamellenposition festlegen",
+      "description": "Stellt die Neigung der Lamellen in Prozent ein",
+      "fields": {
+        "tilt_position": {
+          "name": "Lamellenposition",
+          "description": "Die Zielneigung der Lamellen"
+        }
+      }
+    },
+    "set_current_position": {
+      "name": "Aktuelle Position erzwingen",
+      "description": "Setzt die aktuelle Position in HA, ohne den Motor zu bewegen",
+      "fields": {
+        "position": {
+          "name": "Position",
+          "description": "Der zu speichernde Positionswert"
+        }
+      }
+    },
+    "set_current_tilt_position": {
+      "name": "Aktuelle Lamellenposition erzwingen",
+      "description": "Setzt die aktuelle Lamellenneigung in HA, ohne den Motor zu bewegen",
+      "fields": {
+        "tilt_position": {
+          "name": "Lamellenposition",
+          "description": "Der zu speichernde Neigungswert"
+        }
+      }
+    },
+    "set_sunny": {
+      "name": "Sonnenschein-Status festlegen",
+      "description": "Sendet den Befehl an den Motor, ob es sonnig ist oder nicht",
+      "fields": {
+        "sunny": {
+          "name": "Sonnig",
+          "description": "Aktivieren, wenn es sonnig ist"
+        }
+      }
+    },
+    "set_windy": {
+      "name": "Wind-Status festlegen",
+      "description": "Sendet den Befehl an den Motor, ob es windig ist oder nicht",
+      "fields": {
+        "windy": {
+          "name": "Windig",
+          "description": "Aktivieren, wenn es windig ist"
+        }
+      }
+    },
+    "send_command": {
+      "name": "RTS-Befehl senden",
+      "description": "Sendet einen beliebigen Rohbefehl über das RTS-Protokoll",
+      "fields": {
+        "command": {
+          "name": "Befehl",
+          "description": "Der zu sendende RTS-Befehl"
+        },
+        "repeat": {
+          "name": "Wiederholung",
+          "description": "Anzahl der Wiederholungen für den Befehl"
+        }
+      }
+    },
+    "send_step_command": {
+      "name": "Schritt-Befehl senden",
+      "description": "Sendet einen schrittweisen Bewegungsbefehl",
+      "fields": {
+        "direction": {
+          "name": "Richtung",
+          "description": "Die Richtung des Schritts (Hoch / Runter)"
+        },
+        "step_size": {
+          "name": "Schrittweite",
+          "description": "Die Weite des Schritts (wobei 127 das Maximum ist)"
+        },
+        "repeat": {
+          "name": "Wiederholung",
+          "description": "Anzahl der Wiederholungen für den Befehl"
+        }
+      }
+    },
+    "reboot": {
+      "name": "Neustarten",
+      "description": "Löst einen Neustart des ESPSomfy-RTS-Geräts aus"
+    },
+    "backup": {
+      "name": "Sicherung erstellen",
+      "description": "Löst eine Sicherung der ESPSomfy-RTS-Gerätekonfiguration aus"
+    }
+  }
+}

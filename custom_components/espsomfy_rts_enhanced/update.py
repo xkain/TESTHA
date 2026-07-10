@@ -1,0 +1,178 @@
+"""Support for ESPSomfy RTS updates."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, cast
+
+from homeassistant.components.update import (
+    UpdateDeviceClass,
+    UpdateEntity,
+    UpdateEntityFeature,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .const import DOMAIN, EVT_CONNECTED, EVT_FWSTATUS, EVT_UPDPROGRESS
+from .controller import ESPSomfyController
+from .entity import ESPSomfyEntity
+
+_LOGGER = logging.getLogger(__name__)
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up ESPSomfy RTS update based on a config entry."""
+    controller: ESPSomfyController = hass.data[DOMAIN][config_entry.entry_id]
+    data = controller.api.get_config()
+    if "serverId" in data:
+        async_add_entities([ESPSomfyRTSUpdateEntity(controller=controller)])
+
+
+class ESPSomfyRTSUpdateEntity(ESPSomfyEntity, UpdateEntity):
+    """Defines an ESPSomfy RTS update entity."""
+
+    _attr_device_class = UpdateDeviceClass.FIRMWARE
+
+    # On force l'entité à rester dans le bloc "Configuration" du tableau de bord
+    _attr_entity_category = EntityCategory.CONFIG
+
+    # Indique explicitement à Home Assistant de ne JAMAIS rafraîchir cette entité en boucle (Bloque le NotImplementedError)
+    _attr_should_poll = False
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "firmware"
+
+    def __init__(self, *, controller: ESPSomfyController) -> None:
+        """Initialize the update entity."""
+        super().__init__(data=None, controller=controller)
+
+        self._controller = controller
+        self._available = True
+        self._attr_unique_id = f"update_{controller.unique_id}"
+        self._update_status = 0
+        self._fw_progress = 100
+        self._app_progress = 100
+        self._total_progress = 100
+
+        # Sécurité au démarrage : On applique les fonctionnalités de base
+        self._attr_supported_features = (
+            UpdateEntityFeature.SPECIFIC_VERSION
+            | UpdateEntityFeature.PROGRESS
+            | UpdateEntityFeature.RELEASE_NOTES
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if (
+            self._controller.data["event"] == EVT_CONNECTED
+            and "connected" in self._controller.data
+        ):
+            self._available = bool(self._controller.data["connected"])
+            self.async_write_ha_state()
+
+        elif self._controller.data["event"] == EVT_FWSTATUS:
+            evt_data = self._controller.data
+
+            # Changé de .error à .debug pour ne plus polluer les logs de l'utilisateur
+            _LOGGER.debug("ESPSomfy RTS FWSTATUS Payload: %s", evt_data)
+
+            # Extraction des deux verrous de sécurité
+            check_updates = evt_data.get("checkForUpdate", False)
+            internet_ok = evt_data.get("inetAvailable", False)
+
+            # Le bouton d'installation ne s'active QUE si l'ESP confirme les deux conditions
+            if check_updates and internet_ok:
+                self._attr_supported_features = (
+                    UpdateEntityFeature.INSTALL
+                    | UpdateEntityFeature.SPECIFIC_VERSION
+                    | UpdateEntityFeature.PROGRESS
+                    | UpdateEntityFeature.BACKUP
+                    | UpdateEntityFeature.RELEASE_NOTES
+                )
+            else:
+                self._attr_supported_features = (
+                    UpdateEntityFeature.SPECIFIC_VERSION
+                    | UpdateEntityFeature.PROGRESS
+                    | UpdateEntityFeature.RELEASE_NOTES
+                )
+            self.async_write_ha_state()
+
+        elif self.controller.data["event"] == EVT_UPDPROGRESS:
+            d = self.controller.data
+            if "part" in d:
+                if int(d["part"]) == 0:
+                    self._app_progress = 0
+                    self._fw_progress = (int(d["loaded"]) / int(d["total"])) * 100
+                elif int(d["part"]) == 100:
+                    self._fw_progress = 100
+                    self._app_progress = (int(d["loaded"]) / int(d["total"])) * 100
+                self._total_progress = int((self._fw_progress + self._app_progress) / 2)
+                self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Indicates whether the shade is available."""
+        return self._available
+
+    @property
+    def can_install(self) -> bool:
+        """Indicates whether the current version supports firmware installation."""
+        return True
+
+    @property
+    def installed_version(self) -> str | None:
+        """Version currently installed and in use."""
+        # 🟢 CORRECTION : Utilise l'objet controller au lieu du faux coordinator standard
+        if (version := self._controller.version) is None:
+            return None
+        return str(version)
+
+    @property
+    def latest_version(self) -> str | None:
+        """Latest version available for install."""
+        cfg = self._controller.api.get_config()
+        if cfg.get("checkForUpdate", False) is False:
+            return None
+
+        # 🟢 CORRECTION : Utilise l'objet controller au lieu du faux coordinator standard
+        if (latest := self._controller.latest_version) is None:
+            return None
+        return str(latest)
+
+    @property
+    def in_progress(self) -> bool | int | None:
+        """Update installation progress."""
+        if self._total_progress < 100:
+            return self._total_progress
+        return False
+
+    @property
+    def release_url(self) -> str | None:
+        """URL to the full release notes of the latest version available."""
+        if (version := self.latest_version) is None:
+            return None
+        return f"https://github.com/xkain/ESPSomfy-RTS/releases/tag/{version}"
+
+    async def async_install(
+        self, version: str | None, backup: bool, **kwargs: Any
+    ) -> None:
+        """Install an update."""
+        success = True
+        if backup:
+            success = await self._controller.create_backup()
+        if success:
+            version = cast(str, self.latest_version)
+            if version is not None:
+                await self.controller.update_firmware(version)
+
+    async def async_release_notes(self) -> str | None:
+        """Return the release notes from GitHub."""
+        if (version := self.latest_version) is None:
+            return None
+
+        return await self._controller.fetch_release_notes(version)

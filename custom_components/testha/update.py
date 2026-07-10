@@ -37,8 +37,6 @@ class ESPSomfyRTSUpdateEntity(ESPSomfyEntity, UpdateEntity):
     """Defines an ESPSomfy RTS update entity."""
 
     _attr_device_class = UpdateDeviceClass.FIRMWARE
-
-    # On force l'entité à rester dans le bloc "Configuration" du tableau de bord
     _attr_entity_category = EntityCategory.CONFIG
 
     # Indique explicitement à Home Assistant de ne JAMAIS rafraîchir cette entité en boucle (Bloque le NotImplementedError)

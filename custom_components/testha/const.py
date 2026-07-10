@@ -2,7 +2,7 @@
 
 from homeassistant.const import Platform
 
-VERSION = "v2.5.6"
+VERSION = "v2.5.7"
 DOMAIN = "testha"
 MANUFACTURER = "xkain"
 API_CONTROLLER = "/controller"

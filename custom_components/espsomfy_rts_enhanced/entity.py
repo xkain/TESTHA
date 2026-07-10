@@ -54,7 +54,7 @@ class ESPSomfyEntity(CoordinatorEntity[ESPSomfyController], Entity):
             identifiers={(DOMAIN, self.controller.unique_id)},
             name=self.controller.device_name,
             manufacturer=MANUFACTURER,
-            model=f"TESTHA Integration {VERSION}",
+            model=f"testha Integration {VERSION}",
             sw_version=self.controller.version,
             hw_version=None,
         )

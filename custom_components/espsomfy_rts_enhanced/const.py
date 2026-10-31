@@ -20,6 +20,11 @@ API_REBOOT = "/reboot"
 API_RESTORE = "/restore"
 API_SCHEDULES = "/schedules"
 API_SAVESCHEDULE = "/saveSchedule"
+# OTA par relais (firmware 3.0.1+) : le boîtier ne télécharge plus rien, l'intégration lit le
+# catalogue publié sur Pages, récupère l'image et la pousse à /updateFirmware.
+OTA_CATALOG_URL = "https://xkain.github.io/TESTRTS/ota/index.json"
+FW_RAW_ROOT = "https://raw.githubusercontent.com/xkain/TESTRTS/"
+FW_RELEASES_URL = "https://github.com/xkain/TESTRTS/releases/tag/"
 EVT_CONTROLLER = "controller"
 EVT_SHADESTATE = "shadeState"
 EVT_GROUPSTATE = "groupState"

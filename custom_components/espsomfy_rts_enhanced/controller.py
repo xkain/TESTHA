@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime
+import gzip
+import hashlib
 import json
 import logging
 import os
+import re
+import secrets
 import threading
+import time
 from threading import Timer
 from typing import Any
 from urllib.parse import quote
@@ -16,6 +22,7 @@ import aiofiles
 import aiohttp
 from packaging.version import InvalidVersion, parse as version_parse
 import websocket
+from yarl import URL
 
 from homeassistant.components.cover import CoverDeviceClass, CoverEntityFeature
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PIN, CONF_USERNAME, Platform
@@ -57,6 +64,8 @@ from .const import (
     EVT_SHADESTATE,
     EVT_UPDPROGRESS,
     EVT_WIFISTRENGTH,
+    FW_RAW_ROOT,
+    OTA_CATALOG_URL,
     PLATFORMS,
 )
 
@@ -328,9 +337,20 @@ class ESPSomfyController(DataUpdateCoordinator):
         """Create a backup of the configuration and stores it in HA."""
         return await self.api.create_backup()
 
-    async def update_firmware(self, version) -> bool:
+    async def update_firmware(
+        self, version, on_progress: Callable[[int], None] | None = None
+    ) -> bool:
         """Start the firmware update process."""
-        return await self.api.update_firmware(version)
+        return await self.api.update_firmware(version, on_progress)
+
+    @property
+    def relay_ota(self) -> bool:
+        """True when the firmware expects the image to be pushed to it."""
+        return self.api.relay_ota
+
+    async def refresh_catalog(self, force: bool = False) -> None:
+        """Re-read the published firmware catalog."""
+        await self.api.refresh_catalog(force)
 
     async def fetch_release_notes(self, version: str) -> str | None:
         """Passerelle pour récupérer les notes de version."""
@@ -494,6 +514,10 @@ class ESPSomfyAPI:
         self._needs_credentials = False
         # Identifiants présents mais refusés, typiquement périmés d'un mode précédent.
         self._bad_credentials = False
+        # Catalogue OTA (relais) : dernière lecture et entrée retenue pour cette carte.
+        self._catalog: Any = None
+        self._catalog_at = 0.0
+        self._latest_entry: dict[str, Any] | None = None
 
     @property
     def needs_credentials(self) -> bool:
@@ -562,11 +586,30 @@ class ESPSomfyAPI:
     @property
     def latest_version(self) -> str | None:
         """Getter for the latest version."""
+        if self.relay_ota:
+            return self._latest_entry["tag"] if self._latest_entry else None
         if "latest" in self._config:
             if self._config["latest"] == "":
                 return None
             return self._config["latest"]
         return None
+
+    @property
+    def relay_ota(self) -> bool:
+        """True for firmware that no longer downloads updates itself.
+
+        Only that firmware reports its partition layout; older builds still send
+        latest/inetAvailable and download through /downloadFirmware.
+        """
+        return "layout" in self._config
+
+    @property
+    def board_key(self) -> str:
+        """Catalog key for this board: the firmware token, xxx_BOX_eth becoming box_eth."""
+        board = str(self._config.get("board", ""))
+        if "_BOX_" in board:
+            return "box_" + board.split("_BOX_", 1)[1]
+        return board
 
     @property
     def model(self) -> str:
@@ -677,6 +720,10 @@ class ESPSomfyAPI:
             self._config["checkForUpdate"] = data["checkForUpdate"]
         if "inetAvailable" in data:
             self._config["inetAvailable"] = data["inetAvailable"]
+        if "layout" in data:
+            self._config["layout"] = data["layout"]
+        if "board" in data:
+            self._config["board"] = data["board"]
         if cver != new_ver:
             # print(f"Version: {cver} to {new_ver}")
             dev_registry = dr.async_get(self.hass)
@@ -707,14 +754,221 @@ class ESPSomfyAPI:
             pass
         return False
 
-    async def update_firmware(self, version) -> bool:
+    @staticmethod
+    def _version_tuple(tag: str | None) -> tuple[int, int, int]:
+        m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", tag or "")
+        return (int(m[1]), int(m[2]), int(m[3])) if m else (0, 0, 0)
+
+    def _board_asset(self, entry: dict[str, Any]) -> dict[str, Any] | None:
+        """Image of a catalog entry for this board, if built for its partition layout."""
+        asset = (entry.get("boards") or {}).get(self.board_key)
+        if not asset or asset.get("layout") != self._config.get("layout"):
+            return None
+        return asset
+
+    async def refresh_catalog(self, force: bool = False) -> None:
+        """Read the catalog and keep the newest non-dev release this board can take."""
+        if not self.relay_ota:
+            return
+        if not force and self._catalog is not None and time.monotonic() - self._catalog_at < 300:
+            return
+        try:
+            async with self._session.get(
+                OTA_CATALOG_URL, timeout=aiohttp.ClientTimeout(total=20)
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning("ESPSomfy-RTS OTA catalog: HTTP %s", resp.status)
+                    return
+                self._catalog = await resp.json(content_type=None)
+                self._catalog_at = time.monotonic()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as e:
+            _LOGGER.warning("ESPSomfy-RTS OTA catalog unreachable: %s", e)
+            return
+        candidates = [
+            v
+            for v in self._catalog.get("versions", [])
+            if not v.get("dev") and self._board_asset(v) is not None
+        ]
+        self._latest_entry = max(
+            candidates, key=lambda v: self._version_tuple(v.get("tag")), default=None
+        )
+
+    def _catalog_entry(self, version: str) -> dict[str, Any] | None:
+        for v in (self._catalog or {}).get("versions", []):
+            if v.get("tag") == version:
+                return v
+        return None
+
+    async def update_firmware(
+        self, version, on_progress: Callable[[int], None] | None = None
+    ) -> bool:
         "Update to the latest firmware version."
+        if self.relay_ota:
+            await self._relay_update(version, on_progress or (lambda pct: None))
+            return True
         url = f"{self._api_url}/downloadFirmware?ver={version}"
         async with self._session.get(url, headers=self._headers) as resp:
             if resp.status == 200:
                 return True
             _LOGGER.error(await resp.text())
         return False
+
+    async def _relay_update(self, version: str, on_progress: Callable[[int], None]) -> None:
+        """Download the image from the catalog and push it to the board.
+
+        Progress: 0-40 download, 40-90 upload, 90-97 waiting for the board to come back on
+        the new version, 97-100 language packs. Raises HomeAssistantError on any failure.
+        """
+        await self.refresh_catalog(force=True)
+        entry = self._catalog_entry(version)
+        asset = self._board_asset(entry) if entry else None
+        if asset is None:
+            raise HomeAssistantError(
+                f"No {version} image for board {self.board_key} (layout {self._config.get('layout')})"
+            )
+        image_url = str(URL(OTA_CATALOG_URL).join(URL(asset["path"])))
+        size = int(asset.get("size") or 0)
+
+        # 1. Téléchargement, vérifié ici avant d'envoyer quoi que ce soit au boîtier.
+        on_progress(0)
+        image = bytearray()
+        async with self._session.get(
+            image_url, timeout=aiohttp.ClientTimeout(total=300)
+        ) as resp:
+            if resp.status != 200:
+                raise HomeAssistantError(f"Firmware download failed: HTTP {resp.status}")
+            async for chunk in resp.content.iter_chunked(16384):
+                image.extend(chunk)
+                if size:
+                    on_progress(min(40, len(image) * 40 // size))
+        if size and len(image) != size:
+            raise HomeAssistantError(f"Firmware download truncated: {len(image)}/{size} bytes")
+        digest = hashlib.sha256(image).hexdigest()
+        if asset.get("sha256") and digest != asset["sha256"].lower():
+            raise HomeAssistantError("Downloaded firmware does not match its published checksum")
+
+        # 2. Envoi. Corps multipart bâti à la main pour annoncer un Content-Length : le serveur
+        # du boîtier ne lit pas un corps en chunked, et le flux donne la progression.
+        boundary = "ESPSomfyHA" + secrets.token_hex(8)
+        head = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="update"; filename="firmware.bin"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+        tail = f"\r\n--{boundary}--\r\n".encode()
+        total = len(image)
+
+        async def body():
+            yield head
+            for i in range(0, total, 8192):
+                yield bytes(image[i : i + 8192])
+                on_progress(40 + (i + 8192) * 50 // total if i + 8192 < total else 90)
+            yield tail
+
+        headers = {
+            "apikey": self._headers.get("apikey", ""),
+            "X-Firmware-SHA256": digest,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(head) + total + len(tail)),
+        }
+        async with self._session.post(
+            f"{self._config_url}/updateFirmware",
+            data=body(),
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=300),
+        ) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                try:
+                    err = json.loads(text)
+                except ValueError:
+                    err = {}
+                raise HomeAssistantError(
+                    f"Board refused the firmware (HTTP {resp.status}"
+                    f"{', ' + err['code'] if 'code' in err else ''}): {err.get('desc', text)}"
+                )
+
+        # 3. Redémarrage : le boîtier revient soit sur la nouvelle version, soit sur l'ancienne
+        # si le chargeur a fait marche arrière.
+        on_progress(90)
+        running = await self._wait_for_restart(version)
+        if running != version:
+            raise HomeAssistantError(
+                f"Board restarted on {running} instead of {version} (rolled back?)"
+            )
+
+        # 4. Packs de langue, au tag exact de la nouvelle version. Un échec ici n'annule rien.
+        on_progress(97)
+        await self._refresh_langs(version)
+        on_progress(100)
+
+    async def _wait_for_restart(self, version: str, timeout: float = 180) -> str | None:
+        """Poll /loginContext until the board answers again; return the version it runs."""
+        await asyncio.sleep(8)
+        deadline = time.monotonic() + timeout
+        running = None
+        while time.monotonic() < deadline:
+            try:
+                async with self._session.get(
+                    f"{self._config_url}/loginContext",
+                    headers=self._headers,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    if resp.status == 200:
+                        running = (await resp.json(content_type=None)).get("version")
+                        if running == version:
+                            return running
+            except (aiohttp.ClientError, TimeoutError, ValueError):
+                pass
+            await asyncio.sleep(5)
+        return running
+
+    async def _refresh_langs(self, version: str) -> None:
+        """Re-push installed language packs from the release tag, as the web UI does."""
+        try:
+            async with self._session.get(
+                f"{self._config_url}/getInstalledLangs",
+                headers=self._headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                codes = await resp.json(content_type=None) if resp.status == 200 else []
+        except (aiohttp.ClientError, TimeoutError, ValueError) as e:
+            _LOGGER.warning("ESPSomfy-RTS: could not list language packs: %s", e)
+            return
+        for code in codes:
+            try:
+                text = None
+                for ref in (version, "main"):
+                    async with self._session.get(
+                        f"{FW_RAW_ROOT}{ref}/locales/{code}.json",
+                        timeout=aiohttp.ClientTimeout(total=20),
+                    ) as resp:
+                        if resp.status == 200:
+                            text = await resp.read()
+                            break
+                if text is None:
+                    _LOGGER.warning("ESPSomfy-RTS: language pack %s not found", code)
+                    continue
+                form = aiohttp.FormData()
+                form.add_field(
+                    "file",
+                    gzip.compress(text),
+                    filename=f"{code}.json.gz",
+                    content_type="application/gzip",
+                )
+                async with self._session.post(
+                    f"{self._config_url}/uploadLang?code={code}",
+                    data=form,
+                    headers=self._headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.warning(
+                            "ESPSomfy-RTS: language pack %s refused: HTTP %s %s",
+                            code, resp.status, await resp.text(),
+                        )
+            except (aiohttp.ClientError, TimeoutError) as e:
+                _LOGGER.warning("ESPSomfy-RTS: language pack %s failed: %s", code, e)
 
     async def create_backup(self) -> bool:
         """Create a backup."""
@@ -1213,6 +1467,20 @@ class ESPSomfyAPI:
         fetch_error_exception = translations.get(
             f"{prefix}fetch_error_exception.message", "Error while fetching release notes."
         )
+
+        if self.relay_ota:
+            entry = self._catalog_entry(version)
+            if entry and entry.get("notes"):
+                url = str(URL(OTA_CATALOG_URL).join(URL(entry["notes"])))
+                try:
+                    async with self._session.get(url, timeout=10) as response:
+                        if response.status == 200:
+                            return banner + (await response.text())
+                        return fetch_error_status.format(status=response.status)
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.error("Erreur notes de version : %s", e)
+                    return fetch_error_exception
+            return banner + no_description
 
         try:
             async with self._session.get(url, headers=headers, timeout=10) as response:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 from typing import Any, cast
 
@@ -12,14 +13,19 @@ from homeassistant.components.update import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 
-from .const import DOMAIN, EVT_CONNECTED, EVT_FWSTATUS, EVT_UPDPROGRESS
+from .const import DOMAIN, EVT_CONNECTED, EVT_FWSTATUS, EVT_UPDPROGRESS, FW_RELEASES_URL
 from .controller import ESPSomfyController
 from .entity import ESPSomfyEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+# Relecture du catalogue OTA (firmware à relais) en plus de chaque fwStatus.
+CATALOG_REFRESH = timedelta(hours=6)
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -61,6 +67,30 @@ class ESPSomfyRTSUpdateEntity(ESPSomfyEntity, UpdateEntity):
             | UpdateEntityFeature.RELEASE_NOTES
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Start the periodic catalog refresh."""
+        await super().async_added_to_hass()
+
+        async def _refresh(_now=None) -> None:
+            await self._controller.refresh_catalog(force=True)
+            self.async_write_ha_state()
+
+        self.async_on_remove(
+            async_track_time_interval(self.hass, _refresh, CATALOG_REFRESH)
+        )
+        self.hass.async_create_task(_refresh())
+
+    async def _async_refresh_catalog(self) -> None:
+        await self._controller.refresh_catalog()
+        self.async_write_ha_state()
+
+    def _set_progress(self, pct: int) -> None:
+        # Appelé à chaque bloc envoyé : n'écrire l'état que quand le pourcentage change.
+        if pct == self._total_progress:
+            return
+        self._total_progress = pct
+        self.async_write_ha_state()
+
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         if (
@@ -78,8 +108,12 @@ class ESPSomfyRTSUpdateEntity(ESPSomfyEntity, UpdateEntity):
             check_updates = evt_data.get("checkForUpdate", False)
             internet_ok = evt_data.get("inetAvailable", False)
 
-            # Installation offerte seulement si l'ESP confirme les deux
-            if check_updates and internet_ok:
+            # Firmware à relais : c'est HA qui télécharge, l'accès Internet du boîtier ne compte
+            # plus. Ancien firmware : installation offerte seulement si l'ESP confirme les deux.
+            relay = self._controller.relay_ota
+            if relay:
+                self.hass.async_create_task(self._async_refresh_catalog())
+            if check_updates and (relay or internet_ok):
                 self._attr_supported_features = (
                     UpdateEntityFeature.INSTALL
                     | UpdateEntityFeature.SPECIFIC_VERSION
@@ -136,18 +170,23 @@ class ESPSomfyRTSUpdateEntity(ESPSomfyEntity, UpdateEntity):
         return str(latest)
 
     @property
-    def in_progress(self) -> bool | int | None:
+    def in_progress(self) -> bool | None:
         """Update installation progress."""
+        return self._total_progress < 100
+
+    @property
+    def update_percentage(self) -> int | None:
+        """Update installation percentage."""
         if self._total_progress < 100:
             return self._total_progress
-        return False
+        return None
 
     @property
     def release_url(self) -> str | None:
         """URL to the full release notes of the latest version available."""
         if (version := self.latest_version) is None:
             return None
-        return f"https://github.com/xkain/TESTRTS/releases/tag/{version}"
+        return f"{FW_RELEASES_URL}{version}"
 
     async def async_install(
         self, version: str | None, backup: bool, **kwargs: Any
@@ -156,6 +195,21 @@ class ESPSomfyRTSUpdateEntity(ESPSomfyEntity, UpdateEntity):
         success = True
         if backup:
             success = await self._controller.create_backup()
+        if success and self._controller.relay_ota:
+            version = version or self.latest_version
+            if version is None:
+                raise HomeAssistantError("No firmware version to install")
+            self._set_progress(0)
+            try:
+                await self._controller.update_firmware(version, self._set_progress)
+            except HomeAssistantError:
+                raise
+            except Exception as e:
+                _LOGGER.exception("ESPSomfy-RTS firmware update failed")
+                raise HomeAssistantError(f"Firmware update failed: {e}") from e
+            finally:
+                self._set_progress(100)
+            return
         if success:
             version = cast(str, self.latest_version)
             if version is not None:

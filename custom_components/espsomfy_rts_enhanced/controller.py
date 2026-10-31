@@ -104,6 +104,13 @@ class SocketListener(threading.Thread):
         self.running_future = None
         self.reconnects = 0
         self._connect_timer = None
+        # Session réellement ouverte : le firmware envoie "Connected" seulement une fois la
+        # poignée de main acceptée. Sous PIN, une clé absente ou périmée laisse la socket
+        # s'ouvrir puis la referme sans ce message.
+        self._established = False
+        self._opened = False
+        self.auth_rejects = 0
+        self._retry_handle = None
 
     @property
     def url(self) -> str:
@@ -122,6 +129,9 @@ class SocketListener(threading.Thread):
         """Cancel event stream and join the thread."""
         _LOGGER.debug("Stopping event thread")
         self._should_stop = True
+        if self._retry_handle is not None:
+            self._retry_handle.cancel()
+            self._retry_handle = None
         if self.ws_app:  # and self.connected:
             self.ws_app.close()
 
@@ -145,6 +155,9 @@ class SocketListener(threading.Thread):
 
     def reconnect(self):
         """Reconnect to the web socket."""
+        self._retry_handle = None
+        if self._should_stop:
+            return
         if self._connect_timer is not None:
             self._connect_timer.cancel()
         self.reconnects = self.reconnects + 1
@@ -188,10 +201,26 @@ class SocketListener(threading.Thread):
 
     def ws_begin(self) -> None:
         """Begin the socket."""
+        self._established = False
+        self._opened = False
         self.running_future = self.ws_app.run_forever(ping_interval=20, ping_timeout=15)
         # print("Fell out of run_runforever")
+        if self._opened and not self._established:
+            self.auth_rejects += 1
         if not self._should_stop:
-            self.hass.loop.call_soon_threadsafe(self.reconnect)
+            # Reprise immédiate après une vraie session (redémarrage du boîtier) ; sinon
+            # délai croissant. Sans lui, un refus de poignée de main rebouclait ~20 fois
+            # par seconde, chaque tour basculant toutes les entités.
+            delay = 0 if self._established else min(5 * max(self.reconnects, 1), 60)
+            self.hass.loop.call_soon_threadsafe(self._schedule_reconnect, delay)
+
+    def _schedule_reconnect(self, delay: float) -> None:
+        """Reconnect after `delay` seconds, unless stopped meanwhile (event loop thread)."""
+        if self._should_stop:
+            return
+        if self._retry_handle is not None:
+            self._retry_handle.cancel()
+        self._retry_handle = self.hass.loop.call_later(delay, self.reconnect)
 
     def ws_onerror(self, wsapp, exception):
         """Socket error."""
@@ -206,9 +235,12 @@ class SocketListener(threading.Thread):
             self.hass.loop.call_soon_threadsafe(self.onclose)
 
     def ws_onopen(self, wsapp):
-        """Open the socket."""
-        self.connected = True
-        self.hass.loop.call_soon_threadsafe(self.onopen)
+        """Open the socket.
+
+        Not reported as connected yet: the handshake may still be refused. onopen fires on
+        the firmware's "Connected" message instead.
+        """
+        self._opened = True
 
     def ws_onmessage(self, wsapp, message: str):
         """Process the incoming message."""
@@ -226,7 +258,10 @@ class SocketListener(threading.Thread):
                     self.hass.loop.call_soon_threadsafe(self.onpacket, data)
             elif message.lower() == "connected":
                 self.reconnects = 0
+                self.auth_rejects = 0
+                self._established = True
                 self.connected = True
+                self.hass.loop.call_soon_threadsafe(self.onopen)
         except Exception as e:
             _LOGGER.debug(e.message)
             raise
@@ -250,6 +285,7 @@ class ESPSomfyController(DataUpdateCoordinator):
         self.ws_listener = None
         # Un seul renouvellement de clé par série d'échecs, réarmé à la réouverture.
         self._reauth_tried = False
+        self._reauth_requested = False
 
     @property
     def device_name(self) -> str:
@@ -476,14 +512,28 @@ class ESPSomfyController(DataUpdateCoordinator):
         """Socket closed."""
         data = {"event": EVT_CONNECTED, "connected": False}
         self.async_set_updated_data(data=data)
-        # Fermetures répétées : clé de poignée de main probablement périmée, on la
-        # renouvelle une fois. Le seuil évite un /login à chaque coupure isolée.
-        if self.ws_listener is None or self.ws_listener.reconnects < 3:
+        # Poignée de main refusée à répétition : clé périmée ou PIN apparu. On renouvelle la
+        # clé une fois ; si elle est encore refusée, les identifiants stockés ne valent plus
+        # rien et seul l'utilisateur peut les fournir. Le seuil ignore un refus isolé.
+        if self.ws_listener is None or self.ws_listener.auth_rejects < 3:
             return
-        if self._reauth_tried:
-            return
-        self._reauth_tried = True
-        self.hass.async_create_task(self._refresh_socket_key())
+        if not self._reauth_tried:
+            self._reauth_tried = True
+            self.hass.async_create_task(self._refresh_socket_key())
+        elif not self._reauth_requested:
+            self._reauth_requested = True
+            self.hass.async_create_task(self._request_reauth())
+
+    async def _request_reauth(self) -> None:
+        """Stop retrying and ask the user for the device's credentials."""
+        _LOGGER.warning(
+            "ESPSomfy-RTS (%s) keeps refusing the connection: the PIN or password changed. "
+            "Re-authentication requested",
+            self.api.get_host(),
+        )
+        await self.ws_close()
+        if entry := self.hass.config_entries.async_get_entry(self.config_entry_id):
+            entry.async_start_reauth(self.hass)
 
     async def _refresh_socket_key(self) -> None:
         """Renew the api key, then reopen the socket with it."""

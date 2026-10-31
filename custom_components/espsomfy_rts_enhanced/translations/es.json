@@ -312,6 +312,42 @@
     },
     "release_notes_fetch_error_exception": {
       "message": "Error al obtener las notas de la versión."
+    },
+    "ota_no_image": {
+      "message": "No hay imagen {version} para el dispositivo {board} (tabla de particiones {layout})"
+    },
+    "ota_download_http": {
+      "message": "Error al descargar el firmware: HTTP {status}"
+    },
+    "ota_download_truncated": {
+      "message": "Descarga del firmware incompleta: {received}/{expected} bytes"
+    },
+    "ota_download_checksum": {
+      "message": "El firmware descargado no coincide con su suma de verificación publicada"
+    },
+    "ota_device_unreachable": {
+      "message": "Dispositivo inaccesible en {host}"
+    },
+    "ota_upload_interrupted": {
+      "message": "Envío del firmware a {host} interrumpido: {error}"
+    },
+    "ota_device_refused": {
+      "message": "El dispositivo rechazó el firmware (HTTP {status}): {desc}"
+    },
+    "ota_no_answer": {
+      "message": "El dispositivo no respondió en los 3 minutos siguientes a la actualización; compruébelo en {host}"
+    },
+    "ota_rolled_back": {
+      "message": "El dispositivo se reinició con {running} en lugar de {version} (¿vuelta a la versión anterior?)"
+    },
+    "ota_backup_failed": {
+      "message": "Error en la copia de seguridad de la configuración, actualización cancelada"
+    },
+    "ota_no_version": {
+      "message": "No hay ninguna versión de firmware para instalar"
+    },
+    "ota_failed": {
+      "message": "Error en la actualización del firmware: {error}"
     }
   }
 }

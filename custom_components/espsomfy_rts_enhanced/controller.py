@@ -491,6 +491,15 @@ class ESPSomfyController(DataUpdateCoordinator):
         await self.api.ensure_authenticated()
         await self.ws_connect()
 
+def ota_error(key: str, **placeholders: Any) -> HomeAssistantError:
+    """Firmware update error, translated by Home Assistant from the exceptions section."""
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key=key,
+        translation_placeholders={k: str(v) for k, v in placeholders.items()},
+    )
+
+
 class ESPSomfyAPI:
     """API for sending data to ESPSomfy-RTS hardware device."""
 
@@ -823,8 +832,11 @@ class ESPSomfyAPI:
         entry = self._catalog_entry(version)
         asset = self._board_asset(entry) if entry else None
         if asset is None:
-            raise HomeAssistantError(
-                f"No {version} image for board {self.board_key} (layout {self._config.get('layout')})"
+            raise ota_error(
+                "ota_no_image",
+                version=version,
+                board=self.board_key,
+                layout=self._config.get("layout"),
             )
         image_url = str(URL(OTA_CATALOG_URL).join(URL(asset["path"])))
         size = int(asset.get("size") or 0)
@@ -836,16 +848,16 @@ class ESPSomfyAPI:
             image_url, timeout=aiohttp.ClientTimeout(total=300)
         ) as resp:
             if resp.status != 200:
-                raise HomeAssistantError(f"Firmware download failed: HTTP {resp.status}")
+                raise ota_error("ota_download_http", status=resp.status)
             async for chunk in resp.content.iter_chunked(16384):
                 image.extend(chunk)
                 if size:
                     on_progress(min(40, len(image) * 40 // size))
         if size and len(image) != size:
-            raise HomeAssistantError(f"Firmware download truncated: {len(image)}/{size} bytes")
+            raise ota_error("ota_download_truncated", received=len(image), expected=size)
         digest = hashlib.sha256(image).hexdigest()
         if asset.get("sha256") and digest != asset["sha256"].lower():
-            raise HomeAssistantError("Downloaded firmware does not match its published checksum")
+            raise ota_error("ota_download_checksum")
 
         # 2. Envoi. Corps multipart bâti à la main pour annoncer un Content-Length : le serveur
         # du boîtier ne lit pas un corps en chunked, et le flux donne la progression.
@@ -871,31 +883,40 @@ class ESPSomfyAPI:
             "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Content-Length": str(len(head) + total + len(tail)),
         }
-        async with self._session.post(
-            f"{self._config_url}/updateFirmware",
-            data=body(),
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=300),
-        ) as resp:
-            text = await resp.text()
-            if resp.status != 200:
-                try:
-                    err = json.loads(text)
-                except ValueError:
-                    err = {}
-                raise HomeAssistantError(
-                    f"Board refused the firmware (HTTP {resp.status}"
-                    f"{', ' + err['code'] if 'code' in err else ''}): {err.get('desc', text)}"
-                )
+        try:
+            async with self._session.post(
+                f"{self._config_url}/updateFirmware",
+                data=body(),
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=300),
+            ) as resp:
+                text = await resp.text()
+                status = resp.status
+        except aiohttp.ClientConnectorError as e:
+            raise ota_error("ota_device_unreachable", host=self._host) from e
+        except (aiohttp.ClientError, TimeoutError) as e:
+            raise ota_error(
+                "ota_upload_interrupted", host=self._host, error=type(e).__name__
+            ) from e
+        if status != 200:
+            try:
+                err = json.loads(text)
+            except ValueError:
+                err = {}
+            raise ota_error(
+                "ota_device_refused",
+                status=f"{status}, {err['code']}" if "code" in err else status,
+                desc=err.get("desc", text),
+            )
 
         # 3. Redémarrage : le boîtier revient soit sur la nouvelle version, soit sur l'ancienne
         # si le chargeur a fait marche arrière.
         on_progress(90)
         running = await self._wait_for_restart(version)
+        if running is None:
+            raise ota_error("ota_no_answer", host=self._host)
         if running != version:
-            raise HomeAssistantError(
-                f"Board restarted on {running} instead of {version} (rolled back?)"
-            )
+            raise ota_error("ota_rolled_back", running=running, version=version)
 
         # 4. Packs de langue, au tag exact de la nouvelle version. Un échec ici n'annule rien.
         on_progress(97)

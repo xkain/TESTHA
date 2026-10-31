@@ -312,6 +312,42 @@
     },
     "release_notes_fetch_error_exception": {
       "message": "Error while fetching release notes."
+    },
+    "ota_no_image": {
+      "message": "No {version} image for device {board} (partition layout {layout})"
+    },
+    "ota_download_http": {
+      "message": "Firmware download failed: HTTP {status}"
+    },
+    "ota_download_truncated": {
+      "message": "Firmware download truncated: {received}/{expected} bytes"
+    },
+    "ota_download_checksum": {
+      "message": "Downloaded firmware does not match its published checksum"
+    },
+    "ota_device_unreachable": {
+      "message": "Device unreachable at {host}"
+    },
+    "ota_upload_interrupted": {
+      "message": "Firmware upload to {host} interrupted: {error}"
+    },
+    "ota_device_refused": {
+      "message": "Device refused the firmware (HTTP {status}): {desc}"
+    },
+    "ota_no_answer": {
+      "message": "Device did not answer within 3 minutes after the update; check it at {host}"
+    },
+    "ota_rolled_back": {
+      "message": "Device restarted on {running} instead of {version} (rolled back?)"
+    },
+    "ota_backup_failed": {
+      "message": "Configuration backup failed, update cancelled"
+    },
+    "ota_no_version": {
+      "message": "No firmware version to install"
+    },
+    "ota_failed": {
+      "message": "Firmware update failed: {error}"
     }
   }
 }

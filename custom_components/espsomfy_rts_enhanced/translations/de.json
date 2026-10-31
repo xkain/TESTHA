@@ -312,6 +312,42 @@
     },
     "release_notes_fetch_error_exception": {
       "message": "Fehler beim Abrufen der Versionshinweise."
+    },
+    "ota_no_image": {
+      "message": "Kein {version}-Image für das Gerät {board} (Partitionstabelle {layout})"
+    },
+    "ota_download_http": {
+      "message": "Download der Firmware fehlgeschlagen: HTTP {status}"
+    },
+    "ota_download_truncated": {
+      "message": "Download der Firmware unvollständig: {received}/{expected} Bytes"
+    },
+    "ota_download_checksum": {
+      "message": "Die heruntergeladene Firmware stimmt nicht mit ihrer veröffentlichten Prüfsumme überein"
+    },
+    "ota_device_unreachable": {
+      "message": "Gerät unter {host} nicht erreichbar"
+    },
+    "ota_upload_interrupted": {
+      "message": "Übertragung der Firmware an {host} unterbrochen: {error}"
+    },
+    "ota_device_refused": {
+      "message": "Das Gerät hat die Firmware abgelehnt (HTTP {status}): {desc}"
+    },
+    "ota_no_answer": {
+      "message": "Das Gerät hat innerhalb von 3 Minuten nach dem Update nicht geantwortet; prüfen Sie es unter {host}"
+    },
+    "ota_rolled_back": {
+      "message": "Das Gerät wurde mit {running} statt {version} neu gestartet (Rückkehr zur vorherigen Version?)"
+    },
+    "ota_backup_failed": {
+      "message": "Sicherung der Konfiguration fehlgeschlagen, Update abgebrochen"
+    },
+    "ota_no_version": {
+      "message": "Keine Firmware-Version zum Installieren"
+    },
+    "ota_failed": {
+      "message": "Firmware-Update fehlgeschlagen: {error}"
     }
   }
 }

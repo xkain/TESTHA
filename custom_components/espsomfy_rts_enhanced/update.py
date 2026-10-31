@@ -19,7 +19,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN, EVT_CONNECTED, EVT_FWSTATUS, EVT_UPDPROGRESS, FW_RELEASES_URL
-from .controller import ESPSomfyController
+from .controller import ESPSomfyController, ota_error
 from .entity import ESPSomfyEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -195,10 +195,12 @@ class ESPSomfyRTSUpdateEntity(ESPSomfyEntity, UpdateEntity):
         success = True
         if backup:
             success = await self._controller.create_backup()
+            if not success:
+                raise ota_error("ota_backup_failed")
         if success and self._controller.relay_ota:
             version = version or self.latest_version
             if version is None:
-                raise HomeAssistantError("No firmware version to install")
+                raise ota_error("ota_no_version")
             self._set_progress(0)
             try:
                 await self._controller.update_firmware(version, self._set_progress)
@@ -206,7 +208,7 @@ class ESPSomfyRTSUpdateEntity(ESPSomfyEntity, UpdateEntity):
                 raise
             except Exception as e:
                 _LOGGER.exception("ESPSomfy-RTS firmware update failed")
-                raise HomeAssistantError(f"Firmware update failed: {e}") from e
+                raise ota_error("ota_failed", error=e) from e
             finally:
                 self._set_progress(100)
             return

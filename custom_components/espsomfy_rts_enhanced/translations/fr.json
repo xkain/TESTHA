@@ -312,6 +312,42 @@
     },
     "release_notes_fetch_error_exception": {
       "message": "Erreur lors de la récupération des notes de version."
+    },
+    "ota_no_image": {
+      "message": "Aucune image {version} pour l'appareil {board} (table de partitions {layout})"
+    },
+    "ota_download_http": {
+      "message": "Échec du téléchargement du micrologiciel : HTTP {status}"
+    },
+    "ota_download_truncated": {
+      "message": "Téléchargement du micrologiciel incomplet : {received}/{expected} octets"
+    },
+    "ota_download_checksum": {
+      "message": "Le micrologiciel téléchargé ne correspond pas à son empreinte publiée"
+    },
+    "ota_device_unreachable": {
+      "message": "Appareil injoignable à l'adresse {host}"
+    },
+    "ota_upload_interrupted": {
+      "message": "Envoi du micrologiciel vers {host} interrompu : {error}"
+    },
+    "ota_device_refused": {
+      "message": "L'appareil a refusé le micrologiciel (HTTP {status}) : {desc}"
+    },
+    "ota_no_answer": {
+      "message": "L'appareil n'a pas répondu dans les 3 minutes suivant la mise à jour ; vérifiez-le à l'adresse {host}"
+    },
+    "ota_rolled_back": {
+      "message": "L'appareil a redémarré sur {running} au lieu de {version} (retour à la version précédente ?)"
+    },
+    "ota_backup_failed": {
+      "message": "Échec de la sauvegarde de la configuration, mise à jour annulée"
+    },
+    "ota_no_version": {
+      "message": "Aucune version du micrologiciel à installer"
+    },
+    "ota_failed": {
+      "message": "Échec de la mise à jour du micrologiciel : {error}"
     }
   }
 }
